@@ -1,6 +1,6 @@
 [project]
 name = "ysaqml"
-version = "0.1.0"
+version = "2025.12.03-1"
 description = "Add your description here"
 readme = "README.md"
 authors = [
@@ -13,11 +13,13 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-test = [
-    "pytest>=8.0",
-]
 dev = [
+    "mypy>=1.19.0",
     "pytest>=9.0.1",
+    "ruff>=0.14.7",
+]
+beartype = [
+    "beartype>=0.22.8",
 ]
 
 [build-system]
@@ -26,3 +28,96 @@ build-backend = "hatchling.build"
 
 [tool.uv.sources]
 naay = { git = "https://github.com/rbroderi/naay" }
+
+[project.entry-points."sqlalchemy.dialects"]
+ysaqml = "ysaqml.dialect:YamlDialect"
+
+[project.entry-points."sqlalchemy.plugins"]
+"ysaqml.sync" = "ysaqml.dialect:YamlSyncPlugin"
+
+[tool.ruff]
+exclude = [
+    ".bzr",
+    ".direnv",
+    ".eggs",
+    ".git",
+    ".git-rewrite",
+    ".hg",
+    ".ipynb_checkpoints",
+    ".mypy_cache",
+    ".nox",
+    ".pants.d",
+    ".pyenv",
+    ".pytest_cache",
+    ".pytype",
+    ".ruff_cache",
+    ".svn",
+    ".tox",
+    ".venv",
+    ".vscode",
+    "__pypackages__",
+    "_build",
+    "buck-out",
+    "build",
+    "dist",
+    "node_modules",
+    "site-packages",
+    "venv",
+    ".venv",
+]
+line-length = 88
+indent-width = 4
+target-version = "py313"
+
+[tool.ruff.lint]
+select = ["ALL"]
+ignore = [
+    "TC006",
+    "B024",
+    "PIE790",
+    "T201",
+    "PYI013",
+    "TC003",
+    "PLC0414",
+    "ERA001",
+    "T203",
+    "ANN401",
+    "TC002",
+    "TD002",
+    "TD003",
+    "FIX002",
+    "FBT001",
+    "FBT002",
+    "D203",
+    "D212",
+    "S101",
+]
+fixable = ["ALL"]
+unfixable = []
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+skip-magic-trailing-comma = false
+line-ending = "auto"
+docstring-code-format = true
+docstring-code-line-length = "dynamic"
+
+[tool.ruff.lint.isort]
+force-single-line = true
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = [
+    "D100",
+    "D101",
+    "D102",
+    "D103",
+    "D104",
+    "D105",
+    "D106",
+    "D107",
+    "ARG002",
+    "ARG001",
+    "ARG005",
+    "SLF001",
+]

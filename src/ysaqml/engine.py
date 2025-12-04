@@ -2,22 +2,25 @@
 
 from __future__ import annotations
 
-import logging
-from collections.abc import Mapping, MutableMapping, Sequence
-from contextlib import contextmanager
-from dataclasses import dataclass, field
+from collections.abc import Sequence
+from dataclasses import dataclass
+from dataclasses import field
 from pathlib import Path
+from types import TracebackType
 from typing import Any
+from typing import Literal
+from typing import Self
 
-import naay
-from sqlalchemy import MetaData, Table, create_engine, event, select
+from sqlalchemy import MetaData
+from sqlalchemy import create_engine
+from sqlalchemy.engine import URL
 from sqlalchemy.engine import Engine
-from sqlalchemy.sql.schema import Column
+from sqlalchemy.pool import StaticPool
 
-DEFAULT_NAAY_VERSION = "2025.12.03-0"
-NULL_SENTINEL = "__NULL__"
-
-_LOGGER = logging.getLogger(__name__)
+from .dialect import YamlSyncPlugin
+from .sync import DEFAULT_NAAY_VERSION
+from .sync import NULL_SENTINEL
+from .sync import YamlSynchronizer
 
 
 @dataclass(slots=True)
@@ -29,26 +32,37 @@ class YamlSqliteEngine:
     naay_version: str = DEFAULT_NAAY_VERSION
     null_token: str = NULL_SENTINEL
     engine: Engine | None = field(init=False, default=None, repr=False)
-    _event_suppression: int = field(init=False, default=0, repr=False)
-    _events_enabled: bool = field(init=False, default=False, repr=False)
+    _sync: YamlSynchronizer = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
+        """Initialize the engine and synchronizer after dataclass initialization."""
         self.storage_path = Path(self.storage_path)
         self.engine = create_engine("sqlite+pysqlite:///:memory:", future=True)
-        event.listen(self.engine, "commit", self._handle_commit)
-        event.listen(self.engine, "rollback", self._handle_rollback)
+        self._sync = YamlSynchronizer(
+            self.metadata,
+            self.storage_path,
+            naay_version=self.naay_version,
+            null_token=self.null_token,
+        )
 
-    def __enter__(self) -> YamlSqliteEngine:
-        with self._suspend_events():
-            self.metadata.create_all(self.engine)
+    def __enter__(self) -> Self:
+        """Enter context manager, creating tables and loading data from YAML files."""
+        if self.engine is None:
+            msg = "YamlSqliteEngine has already been closed"
+            raise RuntimeError(msg)
+        self.metadata.create_all(self.engine)
         self.load()
-        self._events_enabled = True
         return self
 
-    def __exit__(self, exc_type, exc, tb) -> bool:
+    def __exit__(
+        self,
+        exc_type: type[BaseException] | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
+    ) -> Literal[False]:
+        """Clean up resources and save data if no exception occurred."""
         if exc_type is None:
             self.save()
-        self._events_enabled = False
         assert self.engine is not None
         self.engine.dispose()
         return False
@@ -57,141 +71,57 @@ class YamlSqliteEngine:
     # Public API
     def load(self) -> None:
         """Clear SQLite tables and hydrate them from all YAML files."""
-
-        self.storage_path.mkdir(parents=True, exist_ok=True)
         assert self.engine is not None
-        with self._suspend_events():
-            with self.engine.begin() as conn:
-                for table in self.metadata.sorted_tables:
-                    rows = self._read_rows(table)
-                    conn.execute(table.delete())
-                    if rows:
-                        conn.execute(table.insert(), rows)
+        self._sync.load(self.engine)
 
     def save(self) -> None:
         """Dump every SQLite table into its companion YAML file."""
-
-        self.storage_path.mkdir(parents=True, exist_ok=True)
         assert self.engine is not None
-        with self._suspend_events():
-            with self.engine.begin() as conn:
-                for table in self.metadata.sorted_tables:
-                    result = conn.execute(select(table))
-                    mappings = [dict(row._mapping) for row in result]
-                    encoded_rows = [
-                        self._encode_row(table, mapping) for mapping in mappings
-                    ]
-                    self._write_rows(table, encoded_rows)
+        self._sync.save(self.engine)
 
-    # ------------------------------------------------------------------
-    # YAML IO helpers
-    def _row_file(self, table: Table) -> Path:
-        return self.storage_path / f"{table.name}.yaml"
 
-    def _read_rows(self, table: Table) -> Sequence[MutableMapping[str, Any]]:
-        path = self._row_file(table)
-        if not path.exists():
-            return []
+def create_yaml_engine(
+    metadata: MetaData,
+    storage_path: Path | str,
+    *,
+    naay_version: str = DEFAULT_NAAY_VERSION,
+    null_token: str = NULL_SENTINEL,
+    plugins: Sequence[Any] | None = None,
+    **engine_kwargs: Any,
+) -> Engine:
+    """Create a SQLAlchemy engine configured for the ``ysaqml`` dialect."""
+    storage = Path(storage_path)
+    url = URL.create("ysaqml", database=":memory:")
 
-        text = path.read_text(encoding="utf-8")
-        payload = naay.loads(text)
+    plugin_list = list(plugins or [])
 
-        version = payload.get("_naay_version")
-        if version and version != self.naay_version:
-            _LOGGER.warning(
-                "Table %%s stored with naay version %%s (expected %%s)",
-                table.name,
-                version,
-                self.naay_version,
-            )
-
-        rows = payload.get("rows", [])
-        if not isinstance(rows, list):
+    def _plugin_identifier(value: Any) -> str:
+        if isinstance(value, str):
+            return value
+        name = getattr(value, "name", None)
+        if not name:
+            msg = "plugins must be strings or CreateEnginePlugin classes with a 'name'"
             raise TypeError(
-                f"rows for table {table.name} must be a list, got {type(rows)!r}"
+                msg,
             )
+        return name
 
-        decoded: list[MutableMapping[str, Any]] = []
-        for index, raw_row in enumerate(rows):
-            if not isinstance(raw_row, dict):
-                raise TypeError(f"row {index} for table {table.name} is not a mapping")
-            decoded.append(self._decode_row(table, raw_row))
-        return decoded
+    plugin_names = [_plugin_identifier(item) for item in plugin_list]
+    if "ysaqml.sync" not in plugin_names:
+        plugin_names.append(YamlSyncPlugin.name)
 
-    def _write_rows(self, table: Table, rows: Sequence[Mapping[str, str]]) -> None:
-        payload = {
-            "_naay_version": self.naay_version,
-            "rows": list(rows),
-        }
-        text = naay.dumps(payload)
-        self._row_file(table).write_text(text, encoding="utf-8")
+    engine_kwargs.setdefault("future", True)
+    engine_kwargs.setdefault("storage_path", str(storage))
+    engine_kwargs.setdefault("poolclass", StaticPool)
 
-    # ------------------------------------------------------------------
-    # Encoding/decoding helpers
-    def _decode_row(
-        self, table: Table, raw_row: Mapping[str, str]
-    ) -> MutableMapping[str, Any]:
-        decoded: dict[str, Any] = {}
-        for column in table.columns:
-            if column.name not in raw_row:
-                continue
-            decoded[column.name] = self._decode_value(column, raw_row[column.name])
-        return decoded
-
-    def _encode_row(
-        self, table: Table, row: Mapping[str, Any]
-    ) -> MutableMapping[str, str]:
-        encoded: dict[str, str] = {}
-        for column in table.columns:
-            encoded[column.name] = self._encode_value(row.get(column.name))
-        return encoded
-
-    def _decode_value(self, column: Column[Any], text: str | None) -> Any:
-        if text is None or text == self.null_token:
-            return None
-
-        python_type = getattr(column.type, "python_type", None)
-        if python_type is None:
-            return text
-
-        if python_type is bool:
-            normalized = text.strip().lower()
-            if normalized in {"1", "true", "t", "yes", "y", "on"}:
-                return True
-            if normalized in {"0", "false", "f", "no", "n", "off"}:
-                return False
-            raise ValueError(
-                f"Cannot coerce value {text!r} into bool for column {column.name}"
-            )
-
-        try:
-            return python_type(text)
-        except Exception:  # pragma: no cover - fallback path
-            return text
-
-    def _encode_value(self, value: Any) -> str:
-        if value is None:
-            return self.null_token
-        if isinstance(value, bool):
-            return "true" if value else "false"
-        return str(value)
-
-    # ------------------------------------------------------------------
-    # Engine event wiring
-    def _handle_commit(self, connection) -> None:
-        if not self._events_enabled or self._event_suppression:
-            return
-        self.save()
-
-    def _handle_rollback(self, connection) -> None:
-        if not self._events_enabled or self._event_suppression:
-            return
-        self.load()
-
-    @contextmanager
-    def _suspend_events(self):
-        self._event_suppression += 1
-        try:
-            yield
-        finally:
-            self._event_suppression -= 1
+    connect_args = dict(engine_kwargs.get("connect_args") or {})
+    connect_args.setdefault("check_same_thread", False)
+    engine_kwargs["connect_args"] = connect_args
+    return create_engine(
+        url,
+        metadata=metadata,
+        plugins=plugin_names,
+        naay_version=naay_version,
+        null_token=null_token,
+        **engine_kwargs,
+    )
