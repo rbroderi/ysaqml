@@ -1,6 +1,6 @@
 [project]
 name = "ysaqml"
-version = "2025.12.03-1"
+version = "2025.12.04-0"
 description = "Add your description here"
 readme = "README.md"
 authors = [
