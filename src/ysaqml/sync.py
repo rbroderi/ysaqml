@@ -17,7 +17,7 @@ from sqlalchemy import select
 from sqlalchemy.engine import Engine
 from sqlalchemy.sql.schema import Column
 
-DEFAULT_NAAY_VERSION = "2025.12.03-0"
+DEFAULT_NAAY_VERSION = "1.0"
 NULL_SENTINEL = "<:__NULL__:>"
 BLOB_SENTINEL = "<:__BASE85__:>"
 

@@ -136,8 +136,8 @@ wheels = [
 
 [[package]]
 name = "naay"
-version = "0.1.0"
-source = { git = "https://github.com/rbroderi/naay#82e8d952fa340fdbd4b7254ec6b68f3f1aaaf352" }
+version = "2025.12.4.post1"
+source = { git = "https://github.com/rbroderi/naay#7a74329c3952ed3cfdc2e71eaf93bf3ecde08881" }
 
 [[package]]
 name = "packaging"

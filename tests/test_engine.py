@@ -48,9 +48,9 @@ def load_yaml_dict(path: Path) -> dict[str, Any]:
 
 def load_rows(path: Path) -> list[dict[str, str]]:
     payload = load_yaml_dict(path)
-    rows = payload.get("rows")
+    rows = payload.get("rows", [])
     if not isinstance(rows, list):  # pragma: no cover - test fixtures guarantee shape
-        msg = "Expected rows to be a list"
+        msg = f"Expected rows to be a list, got {type(rows)!r}"
         raise TypeError(msg)
     return cast(list[dict[str, str]], rows)
 
@@ -150,6 +150,25 @@ def test_blob_round_trip(tmp_path: Path, metadata: MetaData) -> None:
     ):
         row = conn.execute(select(files)).mappings().one()
         assert row["payload"] == blob
+
+
+def test_save_persists_empty_collections(tmp_path: Path, metadata: MetaData) -> None:
+    _notes = Table(
+        "notes",
+        metadata,
+        Column("id", Integer, primary_key=True),
+        Column("body", String(120), nullable=True),
+    )
+
+    data_dir = tmp_path / "data"
+
+    with YamlSqliteEngine(metadata, data_dir):
+        # No rows are inserted; we only invoke the save path.
+        pass
+
+    payload = load_yaml_dict(data_dir / "notes.yaml")
+    assert payload["_naay_version"] == DEFAULT_NAAY_VERSION
+    assert load_rows(data_dir / "notes.yaml") == []
 
 
 def test_create_yaml_engine_helper(tmp_path: Path, metadata: MetaData) -> None:

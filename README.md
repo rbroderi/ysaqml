@@ -94,7 +94,7 @@ to call `engine.dispose()` to persist your changes.
 Every YAML document uses the following schema:
 
 ```yaml
-_naay_version: "2025.12.03-0"
+_naay_version: "1.0"
 rows:
 	- id: "1"
 		name: "Ada"
