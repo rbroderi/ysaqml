@@ -4,10 +4,13 @@ from __future__ import annotations
 
 import base64
 import logging
+import os
 import textwrap
 from collections.abc import Mapping
 from collections.abc import MutableMapping
 from collections.abc import Sequence
+from concurrent.futures import Future
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from typing import Any
 
@@ -36,6 +39,7 @@ class YamlSynchronizer:
         *,
         naay_version: str = DEFAULT_NAAY_VERSION,
         null_token: str = NULL_SENTINEL,
+        write_workers: int | None = None,
     ) -> None:
         """
         Initialize the YAML synchronizer.
@@ -45,12 +49,15 @@ class YamlSynchronizer:
             storage_path: Directory path where YAML files will be stored.
             naay_version: Version string for YAML format compatibility.
             null_token: Sentinel string used to represent NULL values in YAML.
+            write_workers: Optional override for the number of concurrent write
+                workers to use when persisting YAML files.
 
         """
         self.metadata = metadata
         self.storage_path = Path(storage_path)
         self.naay_version = naay_version
         self.null_token = null_token
+        self._write_workers = self._resolve_worker_count(write_workers)
 
     # ------------------------------------------------------------------
     # Public API
@@ -67,14 +74,24 @@ class YamlSynchronizer:
     def save(self, engine: Engine) -> None:
         """Flush SQLite tables out to YAML."""
         self.storage_path.mkdir(parents=True, exist_ok=True)
-        with engine.begin() as conn:
+        with (
+            engine.begin() as conn,
+            ThreadPoolExecutor(
+                max_workers=self._write_workers,
+            ) as executor,
+        ):
+            futures: list[Future[None]] = []
             for table in self.metadata.sorted_tables:
                 result = conn.execute(select(table))
                 mappings = [dict(row) for row in result.mappings()]
                 encoded_rows = [
                     self._encode_row(table, mapping) for mapping in mappings
                 ]
-                self._write_rows(table, encoded_rows)
+                futures.append(
+                    executor.submit(self._write_rows, table, encoded_rows),
+                )
+            for future in futures:
+                future.result()
 
     # ------------------------------------------------------------------
     # YAML IO helpers
@@ -126,6 +143,15 @@ class YamlSynchronizer:
         }
         text = naay.dumps(payload)
         self._row_file(table).write_text(text, encoding="utf-8")
+
+    def _resolve_worker_count(self, write_workers: int | None) -> int:
+        if write_workers is None:
+            cpu_count = os.cpu_count() or 1
+            return min(32, cpu_count * 4)
+        if write_workers < 1:
+            msg = "write_workers must be at least 1"
+            raise ValueError(msg)
+        return write_workers
 
     # ------------------------------------------------------------------
     # Encoding/decoding helpers

@@ -31,6 +31,7 @@ class YamlSqliteEngine:
     storage_path: Path | str
     naay_version: str = DEFAULT_NAAY_VERSION
     null_token: str = NULL_SENTINEL
+    write_workers: int | None = None
     engine: Engine | None = field(init=False, default=None, repr=False)
     _sync: YamlSynchronizer = field(init=False, repr=False)
 
@@ -43,6 +44,7 @@ class YamlSqliteEngine:
             self.storage_path,
             naay_version=self.naay_version,
             null_token=self.null_token,
+            write_workers=self.write_workers,
         )
 
     def __enter__(self) -> Self:
