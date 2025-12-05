@@ -249,7 +249,7 @@ wheels = [
 
 [[package]]
 name = "ysaqml"
-version = "2025.12.3.post1"
+version = "2025.12.4.post1"
 source = { editable = "." }
 dependencies = [
     { name = "naay" },

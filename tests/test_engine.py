@@ -21,6 +21,8 @@ from ysaqml import DEFAULT_NAAY_VERSION
 from ysaqml import NULL_SENTINEL
 from ysaqml import YamlSqliteEngine
 from ysaqml import create_yaml_engine
+from ysaqml.sync import BLOB_LINE_WIDTH
+from ysaqml.sync import BLOB_SENTINEL
 
 
 @pytest.fixture
@@ -141,8 +143,14 @@ def test_blob_round_trip(tmp_path: Path, metadata: MetaData) -> None:
 
     rows = load_rows(data_dir / "files.yaml")
     stored_payload = rows[0]["payload"]
-    assert stored_payload.startswith("<:__BASE85__:>")
+    assert stored_payload.startswith(BLOB_SENTINEL)
     assert stored_payload != NULL_SENTINEL
+    payload_lines = stored_payload.splitlines()
+    assert payload_lines[0] == BLOB_SENTINEL
+    assert payload_lines[1:]
+    assert all(len(line) <= BLOB_LINE_WIDTH for line in payload_lines[1:])
+    file_text = (data_dir / "files.yaml").read_text(encoding="utf-8")
+    assert "payload: |" in file_text
 
     with (
         YamlSqliteEngine(metadata, data_dir) as backend,

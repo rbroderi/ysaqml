@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import base64
 import logging
+import textwrap
 from collections.abc import Mapping
 from collections.abc import MutableMapping
 from collections.abc import Sequence
@@ -20,6 +21,7 @@ from sqlalchemy.sql.schema import Column
 DEFAULT_NAAY_VERSION = "1.0"
 NULL_SENTINEL = "<:__NULL__:>"
 BLOB_SENTINEL = "<:__BASE85__:>"
+BLOB_LINE_WIDTH = 64
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -189,12 +191,22 @@ class YamlSynchronizer:
             else:
                 raw = bytes(value)
             payload = base64.a85encode(raw).decode("ascii")
-            return f"{BLOB_SENTINEL}{payload}"
+            chunked = (
+                "\n".join(textwrap.wrap(payload, width=BLOB_LINE_WIDTH))
+                if payload
+                else ""
+            )
+            if chunked:
+                return f"{BLOB_SENTINEL}\n{chunked}"
+            return BLOB_SENTINEL
         return str(value)
 
     def _decode_blob(self, text: str | None) -> bytes:
         if not isinstance(text, str) or not text.startswith(BLOB_SENTINEL):
             msg = "BLOB columns must use the encoded <:__BASE85__:> payload"
             raise ValueError(msg)
-        payload = text[len(BLOB_SENTINEL) :]
-        return base64.a85decode(payload.encode("ascii"))
+        payload = text[len(BLOB_SENTINEL) :].lstrip("\n")
+        normalized = payload.replace("\n", "")
+        if not normalized:
+            return b""
+        return base64.a85decode(normalized.encode("ascii"))
