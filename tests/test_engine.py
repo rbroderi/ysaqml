@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import TracebackType
 from typing import Any
 from typing import cast
 
@@ -211,3 +212,47 @@ def test_create_yaml_engine_helper(tmp_path: Path, metadata: MetaData) -> None:
         {"id": "1", "name": "Ada"},
         {"id": "2", "name": "Grace"},
     ]
+
+
+def test_save_falls_back_when_executor_unavailable(
+    tmp_path: Path,
+    metadata: MetaData,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    users = Table(
+        "users",
+        metadata,
+        Column("id", Integer, primary_key=True),
+        Column("name", String, nullable=False),
+    )
+
+    class ExplodingExecutor:
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            pass
+
+        def __enter__(self) -> ExplodingExecutor:
+            return self
+
+        def __exit__(
+            self,
+            exc_type: type[BaseException] | None,
+            exc: BaseException | None,
+            tb: TracebackType | None,
+        ) -> bool:
+            return False
+
+        def submit(self, *args: Any, **kwargs: Any) -> None:
+            msg = "cannot schedule new futures after interpreter shutdown"
+            raise RuntimeError(msg)
+
+    monkeypatch.setattr("ysaqml.sync.ThreadPoolExecutor", ExplodingExecutor)
+    data_dir = tmp_path / "data"
+
+    with (
+        YamlSqliteEngine(metadata, data_dir) as backend,
+        require_engine(backend.engine).begin() as conn,
+    ):
+        conn.execute(users.insert().values(id=1, name="Ada"))
+
+    rows = load_rows(data_dir / "users.yaml")
+    assert rows == [{"id": "1", "name": "Ada"}]

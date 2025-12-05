@@ -74,24 +74,16 @@ class YamlSynchronizer:
     def save(self, engine: Engine) -> None:
         """Flush SQLite tables out to YAML."""
         self.storage_path.mkdir(parents=True, exist_ok=True)
-        with (
-            engine.begin() as conn,
-            ThreadPoolExecutor(
-                max_workers=self._write_workers,
-            ) as executor,
-        ):
-            futures: list[Future[None]] = []
+        table_payloads: list[tuple[Table, Sequence[Mapping[str, str]]]] = []
+        with engine.begin() as conn:
             for table in self.metadata.sorted_tables:
                 result = conn.execute(select(table))
                 mappings = [dict(row) for row in result.mappings()]
                 encoded_rows = [
                     self._encode_row(table, mapping) for mapping in mappings
                 ]
-                futures.append(
-                    executor.submit(self._write_rows, table, encoded_rows),
-                )
-            for future in futures:
-                future.result()
+                table_payloads.append((table, encoded_rows))
+        self._flush_table_payloads(table_payloads)
 
     # ------------------------------------------------------------------
     # YAML IO helpers
@@ -143,6 +135,54 @@ class YamlSynchronizer:
         }
         text = naay.dumps(payload)
         self._row_file(table).write_text(text, encoding="utf-8")
+
+    def _flush_table_payloads(
+        self,
+        table_payloads: Sequence[tuple[Table, Sequence[Mapping[str, str]]]],
+    ) -> None:
+        if not table_payloads:
+            return
+
+        if self._write_workers <= 1:
+            for table, rows in table_payloads:
+                self._write_rows(table, rows)
+            return
+
+        if self._flush_with_executor(table_payloads):
+            return
+
+        for table, rows in table_payloads:
+            self._write_rows(table, rows)
+
+    def _flush_with_executor(
+        self,
+        table_payloads: Sequence[tuple[Table, Sequence[Mapping[str, str]]]],
+    ) -> bool:
+        try:
+            with ThreadPoolExecutor(
+                max_workers=self._write_workers,
+            ) as executor:
+                futures: list[Future[None]] = []
+                for table, rows in table_payloads:
+                    futures.append(
+                        executor.submit(self._write_rows, table, rows),
+                    )
+                for future in futures:
+                    future.result()
+        except RuntimeError as exc:
+            if not self._executor_unavailable(exc):
+                raise
+            _LOGGER.debug(
+                "ThreadPoolExecutor unavailable during interpreter shutdown; "
+                "falling back to synchronous writes",
+                exc_info=_LOGGER.isEnabledFor(logging.DEBUG),
+            )
+            return False
+        return True
+
+    @staticmethod
+    def _executor_unavailable(exc: BaseException) -> bool:
+        return "interpreter shutdown" in str(exc).lower()
 
     def _resolve_worker_count(self, write_workers: int | None) -> int:
         if write_workers is None:
