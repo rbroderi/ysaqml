@@ -1,7 +1,7 @@
 # ysaqml
 
 ![PyPI - Python Version](https://img.shields.io/pypi/pyversions/ysaqml?logo=python&label=python)
-![License](https://img.shields.io/badge/license-MIT-blue)
+[![License](https://img.shields.io/badge/license-LGPL--3.0--or--later-blue)](https://www.gnu.org/licenses/lgpl-3.0.html)
 ![Platforms](https://img.shields.io/badge/os-windows%20%7C%20linux%20%7C%20macOS-brightgreen)
 ![GitHub release](https://img.shields.io/github/v/release/rbroderi/ysaqml?label=release)
 
@@ -123,3 +123,7 @@ pytest
 
 The tests create temporary directories and exercise the full
 load → mutate → dump loop.
+
+## License
+
+Released under the [GNU LGPL-3.0-or-later](https://www.gnu.org/licenses/lgpl-3.0.html).
