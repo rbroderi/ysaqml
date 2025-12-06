@@ -1,7 +1,7 @@
 [project]
 name = "ysaqml"
-version = "2025.12.04-3"
-description = "Add your description here"
+version = "2025.12.06-0"
+description = "ysaqml provides a YAML-backed persistence layer for SQLAlchemy."
 readme = "README.md"
 authors = [
     { name = "rbroderi", email = "richard.broderick@gmail.com" }
