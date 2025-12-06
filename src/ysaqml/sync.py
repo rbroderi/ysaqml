@@ -6,6 +6,7 @@ import base64
 import logging
 import os
 import textwrap
+from collections.abc import Callable
 from collections.abc import Mapping
 from collections.abc import MutableMapping
 from collections.abc import Sequence
@@ -23,7 +24,9 @@ from sqlalchemy.sql.schema import Column
 
 DEFAULT_NAAY_VERSION = "1.0"
 NULL_SENTINEL = "<:__NULL__:>"
-BLOB_SENTINEL = "<:__BASE85__:>"
+BLOB_SENTINEL_BASE85 = "<:__BASE85__:>"
+BLOB_SENTINEL_BASE64 = "<:__BASE64__:>"
+BLOB_DEFAULT_SENTINEL = BLOB_SENTINEL_BASE85
 BLOB_LINE_WIDTH = 64
 
 _LOGGER = logging.getLogger(__name__)
@@ -40,6 +43,7 @@ class YamlSynchronizer:
         naay_version: str = DEFAULT_NAAY_VERSION,
         null_token: str = NULL_SENTINEL,
         write_workers: int | None = None,
+        blob_encoding: str = BLOB_DEFAULT_SENTINEL,
     ) -> None:
         """
         Initialize the YAML synchronizer.
@@ -51,6 +55,8 @@ class YamlSynchronizer:
             null_token: Sentinel string used to represent NULL values in YAML.
             write_workers: Optional override for the number of concurrent write
                 workers to use when persisting YAML files.
+            blob_encoding: Sentinel that dictates whether blobs are stored as
+                ASCII85 or Base64 text.
 
         """
         self.metadata = metadata
@@ -58,15 +64,18 @@ class YamlSynchronizer:
         self.naay_version = naay_version
         self.null_token = null_token
         self._write_workers = self._resolve_worker_count(write_workers)
+        self._blob_sentinel = blob_encoding
+        self._blob_encoder = self._resolve_blob_encoder(blob_encoding)
 
     # ------------------------------------------------------------------
     # Public API
     def load(self, engine: Engine) -> None:
         """Push YAML contents into SQLite tables."""
         self.storage_path.mkdir(parents=True, exist_ok=True)
+        tables = list(self.metadata.sorted_tables)
+        table_rows = self._load_table_rows(tables)
         with engine.begin() as conn:
-            for table in self.metadata.sorted_tables:
-                rows = self._read_rows(table)
+            for table, rows in table_rows:
                 conn.execute(table.delete())
                 if rows:
                     conn.execute(table.insert(), rows)
@@ -136,6 +145,43 @@ class YamlSynchronizer:
         text = naay.dumps(payload)
         self._row_file(table).write_text(text, encoding="utf-8")
 
+    def _load_table_rows(
+        self,
+        tables: Sequence[Table],
+    ) -> Sequence[tuple[Table, Sequence[MutableMapping[str, Any]]]]:
+        if not tables:
+            return []
+
+        if self._write_workers > 1:
+            parallel = self._read_with_executor(tables)
+            if parallel is not None:
+                return parallel
+
+        return [(table, self._read_rows(table)) for table in tables]
+
+    def _read_with_executor(
+        self,
+        tables: Sequence[Table],
+    ) -> Sequence[tuple[Table, Sequence[MutableMapping[str, Any]]]] | None:
+        try:
+            with ThreadPoolExecutor(
+                max_workers=self._write_workers,
+            ) as executor:
+                futures: list[tuple[Table, Future[Sequence[MutableMapping[str, Any]]]]]
+                futures = [
+                    (table, executor.submit(self._read_rows, table)) for table in tables
+                ]
+                return [(table, future.result()) for table, future in futures]
+        except RuntimeError as exc:
+            if not self._executor_unavailable(exc):
+                raise
+            _LOGGER.debug(
+                "ThreadPoolExecutor unavailable during interpreter shutdown; "
+                "falling back to synchronous reads",
+                exc_info=_LOGGER.isEnabledFor(logging.DEBUG),
+            )
+        return None
+
     def _flush_table_payloads(
         self,
         table_payloads: Sequence[tuple[Table, Sequence[Mapping[str, str]]]],
@@ -192,6 +238,14 @@ class YamlSynchronizer:
             msg = "write_workers must be at least 1"
             raise ValueError(msg)
         return write_workers
+
+    def _resolve_blob_encoder(self, blob_encoding: str) -> Callable[[bytes], bytes]:
+        if blob_encoding == BLOB_SENTINEL_BASE85:
+            return base64.a85encode
+        if blob_encoding == BLOB_SENTINEL_BASE64:
+            return base64.b64encode
+        msg = "blob_encoding must be either <:__BASE85__:> or <:__BASE64__:>"
+        raise ValueError(msg)
 
     # ------------------------------------------------------------------
     # Encoding/decoding helpers
@@ -256,23 +310,41 @@ class YamlSynchronizer:
                 raw = value.tobytes()
             else:
                 raw = bytes(value)
-            payload = base64.a85encode(raw).decode("ascii")
+            payload = self._blob_encoder(raw).decode("ascii")
             chunked = (
                 "\n".join(textwrap.wrap(payload, width=BLOB_LINE_WIDTH))
                 if payload
                 else ""
             )
             if chunked:
-                return f"{BLOB_SENTINEL}\n{chunked}"
-            return BLOB_SENTINEL
+                return f"{self._blob_sentinel}\n{chunked}"
+            return self._blob_sentinel
         return str(value)
 
     def _decode_blob(self, text: str | None) -> bytes:
-        if not isinstance(text, str) or not text.startswith(BLOB_SENTINEL):
-            msg = "BLOB columns must use the encoded <:__BASE85__:> payload"
+        if not isinstance(text, str):
+            msg = "BLOB columns must use the encoded payload markers"
             raise ValueError(msg)
-        payload = text[len(BLOB_SENTINEL) :].lstrip("\n")
-        normalized = payload.replace("\n", "")
-        if not normalized:
-            return b""
-        return base64.a85decode(normalized.encode("ascii"))
+
+        def _decode_payload(
+            sentinel: str,
+            decoder: Callable[[bytes], bytes],
+        ) -> bytes | None:
+            if not text.startswith(sentinel):
+                return None
+            payload = text[len(sentinel) :].lstrip("\n")
+            normalized = payload.replace("\n", "")
+            if not normalized:
+                return b""
+            return decoder(normalized.encode("ascii"))
+
+        decoded = _decode_payload(BLOB_SENTINEL_BASE85, base64.a85decode)
+        if decoded is not None:
+            return decoded
+
+        decoded = _decode_payload(BLOB_SENTINEL_BASE64, base64.b64decode)
+        if decoded is not None:
+            return decoded
+
+        msg = "BLOB columns must use either <:__BASE85__:> or <:__BASE64__:> encodings"
+        raise ValueError(msg)

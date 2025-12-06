@@ -18,6 +18,7 @@ from sqlalchemy.engine import Engine
 from sqlalchemy.pool import StaticPool
 
 from .dialect import YamlSyncPlugin
+from .sync import BLOB_DEFAULT_SENTINEL
 from .sync import DEFAULT_NAAY_VERSION
 from .sync import NULL_SENTINEL
 from .sync import YamlSynchronizer
@@ -32,6 +33,7 @@ class YamlSqliteEngine:
     naay_version: str = DEFAULT_NAAY_VERSION
     null_token: str = NULL_SENTINEL
     write_workers: int | None = None
+    blob_encoding: str = BLOB_DEFAULT_SENTINEL
     engine: Engine | None = field(init=False, default=None, repr=False)
     _sync: YamlSynchronizer = field(init=False, repr=False)
 
@@ -45,6 +47,7 @@ class YamlSqliteEngine:
             naay_version=self.naay_version,
             null_token=self.null_token,
             write_workers=self.write_workers,
+            blob_encoding=self.blob_encoding,
         )
 
     def __enter__(self) -> Self:
@@ -88,6 +91,7 @@ def create_yaml_engine(
     *,
     naay_version: str = DEFAULT_NAAY_VERSION,
     null_token: str = NULL_SENTINEL,
+    blob_encoding: str = BLOB_DEFAULT_SENTINEL,
     plugins: Sequence[Any] | None = None,
     **engine_kwargs: Any,
 ) -> Engine:
@@ -125,5 +129,6 @@ def create_yaml_engine(
         plugins=plugin_names,
         naay_version=naay_version,
         null_token=null_token,
+        blob_encoding=blob_encoding,
         **engine_kwargs,
     )

@@ -12,6 +12,7 @@ from sqlalchemy.engine import CreateEnginePlugin
 from sqlalchemy.engine import Engine
 from sqlalchemy.schema import MetaData
 
+from .sync import BLOB_DEFAULT_SENTINEL
 from .sync import DEFAULT_NAAY_VERSION
 from .sync import NULL_SENTINEL
 from .sync import YamlSynchronizer
@@ -47,14 +48,23 @@ class YamlSyncPlugin(CreateEnginePlugin):
             or url.query.get("null_token")
             or NULL_SENTINEL
         )
+        blob_encoding = (
+            kwargs.pop("blob_encoding", None)
+            or url.query.get("blob_encoding")
+            or BLOB_DEFAULT_SENTINEL
+        )
 
         naay_version = str(naay_version)
         null_token = str(null_token)
+        if isinstance(blob_encoding, tuple):
+            blob_encoding = blob_encoding[0]
+        blob_encoding = str(blob_encoding)
         self._sync = YamlSynchronizer(
             self._metadata,
             Path(storage_path),
             naay_version=naay_version,
             null_token=null_token,
+            blob_encoding=blob_encoding,
         )
 
     def update_url(self, url: URL) -> URL:
@@ -71,6 +81,7 @@ class YamlSyncPlugin(CreateEnginePlugin):
         dialect_args.pop("storage_path", None)
         dialect_args.pop("naay_version", None)
         dialect_args.pop("null_token", None)
+        dialect_args.pop("blob_encoding", None)
 
     def engine_created(self, engine: Engine) -> None:
         """Create database tables, load YAML data, and register disposal hook."""
