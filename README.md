@@ -1,5 +1,12 @@
 # ysaqml
 
+![PyPI - Python Version](https://img.shields.io/pypi/pyversions/ysaqml?logo=python&label=python)
+![License](https://img.shields.io/badge/license-MIT-blue)
+![Platforms](https://img.shields.io/badge/os-windows%20%7C%20linux%20%7C%20macOS-brightgreen)
+![GitHub release](https://img.shields.io/github/v/release/rbroderi/ysaqml?label=release)
+
+# Overview
+
 `ysaqml` provides a YAML-backed persistence layer for SQLAlchemy. Tables live in
 memory inside SQLite for fast queries, while their contents are loaded from –
 and saved back to – `.yaml` files using the blazing-fast [`naay`](https://github.com/rbroderi/naay)
