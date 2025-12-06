@@ -26,9 +26,6 @@ beartype = [
 requires = ["hatchling"]
 build-backend = "hatchling.build"
 
-[tool.uv.sources]
-naay = { git = "https://github.com/rbroderi/naay" }
-
 [project.entry-points."sqlalchemy.dialects"]
 ysaqml = "ysaqml.dialect:YamlDialect"
 
