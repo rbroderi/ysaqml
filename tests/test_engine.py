@@ -95,16 +95,15 @@ def build_benchmark_tables(
     prefix: str,
     count: int = 8,
 ) -> list[Table]:
-    tables: list[Table] = []
-    for index in range(count):
-        tables.append(
-            Table(
-                f"{prefix}_{index}",
-                metadata,
-                Column("id", Integer, primary_key=True),
-                Column("payload", LargeBinary, nullable=False),
-            ),
+    tables: list[Table] = [
+        Table(
+            f"{prefix}_{index}",
+            metadata,
+            Column("id", Integer, primary_key=True),
+            Column("payload", LargeBinary, nullable=False),
         )
+        for index in range(count)
+    ]
     return tables
 
 
@@ -418,7 +417,7 @@ def test_save_threadpool_benchmark(
 ) -> None:
     tables = build_benchmark_tables(metadata, prefix="save_bench", count=8)
 
-    original_write_rows = YamlSynchronizer._write_rows
+    original_write_rows = YamlSynchronizer._write_rows  # pyright: ignore[reportPrivateUsage]
 
     def slow_write(
         self: YamlSynchronizer,
@@ -473,7 +472,7 @@ def test_load_threadpool_benchmark(
     seed_backend.save()
     seed_engine.dispose()
 
-    original_read_rows = YamlSynchronizer._read_rows
+    original_read_rows = YamlSynchronizer._read_rows  # pyright: ignore[reportPrivateUsage]
 
     def slow_read(
         self: YamlSynchronizer,
